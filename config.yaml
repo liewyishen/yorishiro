@@ -1,0 +1,28 @@
+# Engine parameters. NOT personality. Never mix the two.
+# (§10 discipline note: cooldowns and thresholds live here, not in agents.md)
+
+heartbeat:
+  # adaptive tick intervals, seconds
+  tick_in_conversation: 15
+  tick_afterglow: 60          # < 30 min since last interaction
+  tick_activity: 600          # she's busy
+  tick_idle: 1800             # deep idle
+  tick_jitter: 600            # ± seconds. MANDATORY — clockwork kills the illusion.
+
+  afterglow_window_min: 30
+  conversation_timeout_min: 20   # or a silent user spins her at 15s until dawn
+
+gate:
+  cooldown_min: 90            # min gap between proactive messages
+  daily_proactive_max: 4
+  dnd_start: "23:30"
+  dnd_end: "06:30"
+
+sleep:
+  start: "01:00"
+  wake: "06:30"
+
+intention:                     # L1 — not wired yet
+  urge_threshold: 0.60         # THE introvert/extrovert parameter.
+                               # start high. lower only after reading a week of logs.
+                               # a chatty first impression is unrecoverable.

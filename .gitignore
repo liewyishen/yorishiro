@@ -1,0 +1,26 @@
+# save-file — never leaves this machine
+her/soul.md
+her/identity.md
+her/user.md
+her/state.json
+her/memory/
+her/logs/
+risk.md
+
+# secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# os
+.DS_Store
+Thumbs.db
