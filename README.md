@@ -129,6 +129,10 @@ Exploring the long-run stability of stateful autonomous agents. Memory bloat, na
 
 AGPL-3.0. Individuals unharmed; anyone running this as a service opens their code. The legal continuation of the project's values.
 
+## Contributing
+
+Contributions require signing the [CLA](CLA.md) — the bot will prompt you on your first PR.
+
 ---
 
 *Everything above is engineering; none of it is magic.*
