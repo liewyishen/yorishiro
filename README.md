@@ -125,6 +125,10 @@ Libraries at the limbs, freely: **LiteLLM** (L1/L2 provider routing), **chromadb
 
 Exploring the long-run stability of stateful autonomous agents. Memory bloat, narrative drift, and cost control have no mature literature; the intent is to walk the potholes personally and log what breaks.
 
+## Contributing
+
+Contributions require signing the [CLA](CLA.md) — the bot will prompt you on your first PR.
+
 ## License
 
 AGPL-3.0. Individuals unharmed; anyone running this as a service opens their code. The legal continuation of the project's values.
