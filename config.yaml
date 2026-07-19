@@ -26,3 +26,20 @@ intention:                     # L1 — not wired yet
   urge_threshold: 0.60         # THE introvert/extrovert parameter.
                                # start high. lower only after reading a week of logs.
                                # a chatty first impression is unrecoverable.
+
+llm:
+  # OpenRouter is OpenAI-compatible, so the official SDK talks to it unchanged.
+  # Swapping to Anthropic / OpenAI-direct / a local model is an edit HERE.
+  base_url: "https://openrouter.ai/api/v1"
+  api_key_env: "OPENROUTER_API_KEY"
+  timeout_s: 60               # handle_message runs ON the loop thread —
+                              # the SDK's 600s default would freeze the beat.
+
+l2:
+  model: "deepseek/deepseek-v4-pro"
+  temperature: 0.8
+  max_tokens: 800
+
+api:
+  host: "127.0.0.1"           # never 0.0.0.0. the save-file lives behind this.
+  port: 8765
