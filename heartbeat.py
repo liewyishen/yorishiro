@@ -12,25 +12,28 @@ Success criterion for this file:
 
 import asyncio
 import json
+import logging
 import os
 import queue
 import random
 import sys
 import threading
 import time
-import logging
-from dataclasses import dataclass, asdict, field
-from datetime import datetime, time as dtime, timedelta
+from dataclasses import asdict, dataclass
+from datetime import datetime
+from datetime import time as dtime
 from pathlib import Path
+from typing import cast
 
 import uvicorn
 import yaml
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from openai import OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 from sse_starlette.sse import EventSourceResponse
 
-load_dotenv()   # before anything reads os.environ — no --env-file, ever
+load_dotenv()  # before anything reads os.environ — no --env-file, ever
 
 ROOT = Path(__file__).resolve().parent
 CONFIG = yaml.safe_load((ROOT / "config.yaml").read_text())
@@ -49,6 +52,7 @@ log = logging.getLogger("heartbeat")
 
 
 # ─────────────────────────────────────────────── log fan-out
+
 
 class Broadcast(logging.Handler):
     """Fans her log out to every open /events stream."""
@@ -86,16 +90,17 @@ log.addHandler(BROADCAST)
 
 # ─────────────────────────────────────────────── state
 
+
 @dataclass
 class State:
-    presence: str = "active"              # active | sleeping
-    last_proactive: float = 0.0           # epoch
-    last_interaction: float = 0.0         # epoch
+    presence: str = "active"  # active | sleeping
+    last_proactive: float = 0.0  # epoch
+    last_interaction: float = 0.0  # epoch
     daily_proactive_count: int = 0
-    daily_count_date: str = ""            # YYYY-MM-DD, for rollover
+    daily_count_date: str = ""  # YYYY-MM-DD, for rollover
     in_conversation: bool = False
     activity_running: bool = False
-    activity_absorbed: bool = False       # focused — don't self-interrupt
+    activity_absorbed: bool = False  # focused — don't self-interrupt
 
     @classmethod
     def load(cls) -> "State":
@@ -115,6 +120,7 @@ class State:
 
 
 # ─────────────────────────────────────────────── L0 — pure code, cannot fail
+
 
 def _in_window(now: datetime, start: str, end: str) -> bool:
     """Handles windows that cross midnight."""
@@ -153,6 +159,7 @@ def gate(state: State, now: datetime) -> tuple[bool, str]:
 
 # ─────────────────────────────────────────────── adaptive tick
 
+
 def next_interval(state: State, now: datetime) -> float | None:
     h = CONFIG["heartbeat"]
 
@@ -187,8 +194,7 @@ def _llm_client() -> OpenAI:
         key = os.environ.get(c["api_key_env"])
         if not key:
             raise RuntimeError(f"{c['api_key_env']} is not set")
-        _client = OpenAI(base_url=c["base_url"], api_key=key,
-                         timeout=c["timeout_s"])
+        _client = OpenAI(base_url=c["base_url"], api_key=key, timeout=c["timeout_s"])
     return _client
 
 
@@ -200,12 +206,18 @@ def call_llm(model: str, messages: list[dict], **params) -> str:
     No `reasoning` parameter, deliberately — she is speaking, not solving.
     """
     resp = _llm_client().chat.completions.create(
-        model=model, messages=messages, **params
+        model=model,
+        # the signature stays plain dicts on purpose — callers must not have
+        # to import OpenAI's TypedDicts. Narrowed here, at the one line that
+        # actually touches the SDK, so the coupling stops in this function.
+        messages=cast(list[ChatCompletionMessageParam], messages),
+        **params,
     )
     return (resp.choices[0].message.content or "").strip()
 
 
 # ─────────────────────────────────────────────── loop
+
 
 def tick(state: State, now: datetime) -> None:
     state.roll_day(now)
@@ -264,6 +276,7 @@ def stdin_reader(inbox: queue.Queue) -> None:
 
 # ─────────────────────────────────────────────── local API
 
+
 def build_api(state: State, inbox: queue.Queue) -> FastAPI:
     """
     Reads state, writes only into the inbox. The loop remains the sole
@@ -282,12 +295,12 @@ def build_api(state: State, inbox: queue.Queue) -> FastAPI:
         # content-type, and being strict about it buys nothing here.
         try:
             body = await request.json()
-        except Exception:
-            raise HTTPException(400, "body must be JSON")
+        except Exception as exc:
+            raise HTTPException(400, "body must be JSON") from exc
         text = str(body.get("text", "")).strip()
         if not text:
             raise HTTPException(400, "text is required")
-        inbox.put(text)          # same door the stdin reader uses
+        inbox.put(text)  # same door the stdin reader uses
         return {"queued": text}
 
     @app.get("/events")
@@ -313,9 +326,7 @@ def build_api(state: State, inbox: queue.Queue) -> FastAPI:
 
 def serve_api(app: FastAPI) -> None:
     c = CONFIG["api"]
-    uvicorn.Server(
-        uvicorn.Config(app, host=c["host"], port=c["port"], log_level="warning")
-    ).run()
+    uvicorn.Server(uvicorn.Config(app, host=c["host"], port=c["port"], log_level="warning")).run()
 
 
 def main() -> None:
@@ -323,8 +334,7 @@ def main() -> None:
     inbox: queue.Queue = queue.Queue()
 
     threading.Thread(target=stdin_reader, args=(inbox,), daemon=True).start()
-    threading.Thread(target=serve_api, args=(build_api(state, inbox),),
-                     daemon=True).start()
+    threading.Thread(target=serve_api, args=(build_api(state, inbox),), daemon=True).start()
     log.info("begin heartbeat — api on %(host)s:%(port)s", CONFIG["api"])
 
     while True:
@@ -342,7 +352,7 @@ def main() -> None:
 
         try:
             if msg is None:
-                tick(state, datetime.now())   # the timeout IS the heartbeat
+                tick(state, datetime.now())  # the timeout IS the heartbeat
             else:
                 # user message: bypasses L0 and L1 entirely, direct to L2.
                 # recorded before the call, so a failed reply still counts
