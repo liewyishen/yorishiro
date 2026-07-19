@@ -7,6 +7,9 @@ tested and L1/L2 never will be.
 at exactly the hours where its bugs live.
 """
 
+import json
+import queue
+import threading
 from datetime import datetime
 
 import pytest
@@ -210,3 +213,66 @@ def test_live_conversation_does_not_expire():
     s.last_interaction = NOON.timestamp() - 60  # 1 min of quiet
     hb.tick(s, NOON)
     assert s.in_conversation is True
+
+
+# ── reply worker: the handoff, without a live model ───────────
+# The worker is the one new thread that talks to a model, so the two
+# promises worth pinning are: the lifecycle always closes over the
+# broadcast, and a dead model kills one reply, not the worker.
+
+
+def _worker() -> queue.Queue:
+    replies: queue.Queue = queue.Queue()
+    threading.Thread(target=hb.reply_worker, args=(replies,), daemon=True).start()
+    return replies
+
+
+def _next_lifecycle(sub: queue.Queue) -> list[dict]:
+    # journal strings share the pipe; keep only reply events, until end
+    events = []
+    while True:
+        item = sub.get(timeout=5)
+        if isinstance(item, dict) and item["event"] == "reply":
+            events.append(json.loads(item["data"]))
+            if events[-1]["type"] == "reply_end":
+                return events
+
+
+def test_reply_worker_streams_the_lifecycle(monkeypatch):
+    monkeypatch.setattr(hb, "stream_llm", lambda *a, **k: iter(["she ", "speaks"]))
+    sub = hb.BROADCAST.subscribe()
+    try:
+        _worker().put(("hello", False))
+        events = _next_lifecycle(sub)
+        assert events[0]["type"] == "reply_start"
+        assert events[0]["initiated"] is False
+        assert [e["text"] for e in events if e["type"] == "reply_delta"] == ["she ", "speaks"]
+        assert events[0]["id"] == events[-1]["id"]
+    finally:
+        hb.BROADCAST.unsubscribe(sub)
+
+
+def test_reply_worker_survives_a_dead_model(monkeypatch):
+    calls = {"n": 0}
+
+    def flaky(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("model down")
+        return iter(["back"])
+
+    monkeypatch.setattr(hb, "stream_llm", flaky)
+    sub = hb.BROADCAST.subscribe()
+    try:
+        replies = _worker()
+        replies.put(("first", False))
+        replies.put(("second", False))
+        died = _next_lifecycle(sub)
+        # the client that saw reply_start is released even though the model died
+        assert [e["type"] for e in died] == ["reply_start", "reply_end"]
+        lived = _next_lifecycle(sub)
+        # and the worker is still standing for the next message
+        assert [e["text"] for e in lived if e["type"] == "reply_delta"] == ["back"]
+        assert lived[0]["id"] != died[0]["id"]
+    finally:
+        hb.BROADCAST.unsubscribe(sub)

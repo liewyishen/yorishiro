@@ -86,7 +86,11 @@ class Broadcast(logging.Handler):
                     pass  # a stalled reader must never stall the heartbeat
 
     def subscribe(self) -> queue.Queue:
-        q: queue.Queue = queue.Queue(maxsize=512)
+        # deep enough that a real reply never drops: a 280-token turn is a
+        # few hundred deltas, so 4096 holds a >10× longer reply plus the
+        # journal around it. drop-on-full stays — a dead reader caps out
+        # and starts losing items, it never grows memory unbounded.
+        q: queue.Queue = queue.Queue(maxsize=4096)
         with self._lock:
             self._subs.add(q)
         return q
@@ -282,12 +286,14 @@ def tick(state: State, now: datetime) -> None:
     #       state.daily_proactive_count += 1           # the proactive budget
 
 
-def handle_message(msg: str, state: State, initiated: bool = False) -> None:
+def handle_message(msg: str, initiated: bool = False) -> None:
     # an inbound message is consent — it skips both vetoes and lands on L2.
     # `initiated` marks the other reply path: an L2 message she started
     # herself (the future L1 wire routes through here with True).
-    log.info("message in → L2: %r", msg)
-
+    #
+    # Runs on the reply worker, never the loop thread — she keeps living
+    # while she speaks. Takes no State on purpose: the loop is the sole
+    # writer, and a signature without state can't be tempted to write it.
     c = CONFIG["l2"]
     rid = uuid.uuid4().hex[:12]
     parts: list[str] = []
@@ -322,6 +328,30 @@ def handle_message(msg: str, state: State, initiated: bool = False) -> None:
     # to stop her from speaking first.
 
 
+def reply_worker(replies: queue.Queue) -> None:
+    """
+    Replies stream here so the heartbeat never waits on a model. One
+    worker, FIFO: a message that lands mid-reply queues and is answered
+    next — she finishes a sentence before starting another, and two
+    interleaved streams would fight over the single voice anyway.
+
+    State discipline: this thread never touches State or state.json — the
+    loop stays the sole writer. When the L1 self-initiated path lands, the
+    worker will report "I spoke first" back through a loop-bound queue
+    (drained at the top of each beat, like the inbox), and the loop will
+    spend last_proactive / daily_proactive_count itself.
+    """
+    while True:
+        msg, initiated = replies.get()
+        try:
+            handle_message(msg, initiated)
+        except Exception:
+            # handle_message guards the stream itself; this catches
+            # everything outside it. a broken reply costs that reply,
+            # never the worker — and never, ever the beat.
+            log.exception("reply worker error")
+
+
 def stdin_reader(inbox: queue.Queue) -> None:
     # one line = one message, so the loop can be exercised by hand
     for line in sys.stdin:
@@ -342,7 +372,9 @@ def build_api(state: State, inbox: queue.Queue) -> FastAPI:
     app = FastAPI(title="yorishiro")
     # the web room runs on its own dev port; bound to 127.0.0.1 there is
     # no cross-site surface worth defending, so the door stays open
-    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+    app.add_middleware(
+        CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+    )
 
     @app.get("/state")
     def read_state() -> dict:
@@ -400,7 +432,9 @@ def serve_api(app: FastAPI) -> None:
 def main() -> None:
     state = State.load()
     inbox: queue.Queue = queue.Queue()
+    replies: queue.Queue = queue.Queue()  # (msg, initiated) → reply worker
 
+    threading.Thread(target=reply_worker, args=(replies,), daemon=True).start()
     threading.Thread(target=stdin_reader, args=(inbox,), daemon=True).start()
     threading.Thread(target=serve_api, args=(build_api(state, inbox),), daemon=True).start()
     log.info("begin heartbeat — api on %(host)s:%(port)s", CONFIG["api"])
@@ -423,11 +457,13 @@ def main() -> None:
                 tick(state, datetime.now())  # the timeout IS the heartbeat
             else:
                 # user message: bypasses L0 and L1 entirely, direct to L2.
-                # recorded before the call, so a failed reply still counts
-                # as having been spoken to.
+                # recorded before the handoff, so a failed reply still
+                # counts as having been spoken to. the reply streams on the
+                # worker — the beat keeps ticking while she speaks.
                 state.last_interaction = time.time()
                 state.in_conversation = True
-                handle_message(msg, state)
+                log.info("message in → L2: %r", msg)
+                replies.put((msg, False))
         except Exception:
             # a dead API key costs one beat, never the loop.
             log.exception("beat raised — skipping")
