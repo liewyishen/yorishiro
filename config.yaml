@@ -32,8 +32,8 @@ llm:
   # Swapping to Anthropic / OpenAI-direct / a local model is an edit HERE.
   base_url: "https://openrouter.ai/api/v1"
   api_key_env: "OPENROUTER_API_KEY"
-  timeout_s: 60               # handle_message runs ON the loop thread —
-                              # the SDK's 600s default would freeze the beat.
+  timeout_s: 60               # bounds the reply worker's model call — a hung
+                              # call costs one reply, not the heartbeat.
 
 l2:
   model: "deepseek/deepseek-v4-pro"
