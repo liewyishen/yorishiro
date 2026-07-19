@@ -11,6 +11,7 @@ import {
   lerp,
   poolHsl,
   poolLightHsl,
+  REPLY_RIPPLE_EVERY_S,
   retractDurationS,
   retractReachPx,
   RING_WIDTH,
@@ -23,7 +24,7 @@ import {
   TRAVEL_R,
 } from "../lib/projection";
 import { SIGNATURES } from "../lib/rings";
-import type { ArrivalEvent, HerState, TickEvent } from "../state/types";
+import type { ArrivalEvent, HerState, SequencedReply, TickEvent } from "../state/types";
 
 /**
  * Three layers, three grammars. The water core is her interior: an
@@ -111,18 +112,22 @@ export function Presence({
   state,
   ticks,
   arrivals,
+  replies,
 }: {
   state: HerState;
   ticks: TickEvent[];
   arrivals: ArrivalEvent[];
+  replies: SequencedReply[];
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const target = useRef(state);
   const tickQ = useRef<TickEvent[]>([]);
   const arriveQ = useRef<ArrivalEvent[]>([]);
+  const replyQ = useRef<SequencedReply[]>([]);
   // events that predate mount are history, not speech — never replay them
   const seenTick = useRef(ticks.length ? ticks[ticks.length - 1].at : 0);
   const seenArrive = useRef(arrivals.length ? arrivals[arrivals.length - 1].at : 0);
+  const seenReply = useRef(replies.length ? replies[replies.length - 1].seq : 0);
 
   useEffect(() => {
     target.current = state;
@@ -146,6 +151,15 @@ export function Presence({
       }
     }
   }, [arrivals]);
+
+  useEffect(() => {
+    for (const r of replies) {
+      if (r.seq > seenReply.current) {
+        if (!document.hidden) replyQ.current.push(r);
+        seenReply.current = r.seq;
+      }
+    }
+  }, [replies]);
 
   useEffect(() => {
     const cv = canvas.current;
@@ -178,6 +192,8 @@ export function Presence({
     let pulseAt = -10; // the water swells when speech leaves or returns
     let pulseAmp = 0;
     let arrivalAt = -10; // the struck note
+    let lastSpeechAt = -10; // paces the ripple rhythm while her words stream
+    let replyHeavy = false; // a self-initiated utterance opens at full weight, once
     let last = performance.now();
     let raf = 0;
 
@@ -268,6 +284,7 @@ export function Presence({
         // her still form: water and ring held where they are, colors live
         tickQ.current.length = 0;
         arriveQ.current.length = 0;
+        replyQ.current.length = 0;
         drawWater(CORE_R, 0, dayA);
         drawBody(1, -0.9, dayA);
         return;
@@ -298,6 +315,33 @@ export function Presence({
         // silent: her stillness needs no drawing
       }
       tickQ.current.length = 0;
+
+      // her voice, live: the water brightens as she begins, then ripples
+      // leave the ring on a gentle rhythm for as long as the words flow
+      for (const ev of replyQ.current) {
+        if (ev.kind === "start") {
+          arrivalAt = clock; // the struck note — her voice beginning
+          replyHeavy = ev.self;
+          lastSpeechAt = -10; // the first delta ripples at once
+        } else if (ev.kind === "delta") {
+          if (clock - lastSpeechAt >= REPLY_RIPPLE_EVERY_S) {
+            const heavy = replyHeavy;
+            throwRipple(
+              "ripple",
+              rippleDurationS(t) * (heavy ? SELF_RIPPLE.durationX : 1),
+              heavy ? 3 : 1 + (births % 2),
+              heavy ? SELF_RIPPLE.strength : rippleStrength(t),
+              heavy ? SELF_RIPPLE.widthX : 1,
+            );
+            pulseAt = clock;
+            pulseAmp = heavy ? 3 : 1.4;
+            lastSpeechAt = clock;
+            replyHeavy = false; // the heaviest ripple is a single ripple
+          }
+        }
+        // end: nothing forced — the last ring's long tail is the finish
+      }
+      replyQ.current.length = 0;
 
       // breath ≤3%, plus the brief swell when speech leaves or returns
       const breathe = 1 + cur.breathA * Math.sin(breathAcc);
@@ -337,6 +381,7 @@ export function Presence({
       last = performance.now();
       tickQ.current.length = 0;
       arriveQ.current.length = 0;
+      replyQ.current.length = 0;
     };
     document.addEventListener("visibilitychange", onVisibility);
 

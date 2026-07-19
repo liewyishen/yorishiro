@@ -19,6 +19,8 @@ import random
 import sys
 import threading
 import time
+import uuid
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from datetime import time as dtime
@@ -29,6 +31,7 @@ import uvicorn
 import yaml
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from sse_starlette.sse import EventSourceResponse
@@ -55,7 +58,12 @@ log = logging.getLogger("heartbeat")
 
 
 class Broadcast(logging.Handler):
-    """Fans her log out to every open /events stream."""
+    """
+    Fans her log out to every open /events stream. Queue items are either
+    plain strings (journal lines, sent as default SSE messages) or dicts
+    (structured events, sent as named SSE events) — the stream endpoint
+    tells them apart by type.
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -63,11 +71,17 @@ class Broadcast(logging.Handler):
         self._lock = threading.Lock()
 
     def emit(self, record: logging.LogRecord) -> None:
-        line = self.format(record)
+        self._fan_out(self.format(record))
+
+    def publish(self, event: str, payload: dict) -> None:
+        """Structured events ride the same pipe as the journal lines."""
+        self._fan_out({"event": event, "data": json.dumps(payload, ensure_ascii=False)})
+
+    def _fan_out(self, item: str | dict) -> None:
         with self._lock:
             for q in self._subs:
                 try:
-                    q.put_nowait(line)
+                    q.put_nowait(item)
                 except queue.Full:
                     pass  # a stalled reader must never stall the heartbeat
 
@@ -216,6 +230,23 @@ def call_llm(model: str, messages: list[dict], **params) -> str:
     return (resp.choices[0].message.content or "").strip()
 
 
+def stream_llm(model: str, messages: list[dict], **params) -> Iterator[str]:
+    """
+    call_llm's streaming twin — yields text chunks as the provider sends
+    them. Lives beside it so model access still stops at this section.
+    """
+    stream = _llm_client().chat.completions.create(
+        model=model,
+        messages=cast(list[ChatCompletionMessageParam], messages),
+        stream=True,
+        **params,
+    )
+    for chunk in stream:
+        # providers slip in housekeeping chunks with no choices — skip them
+        if chunk.choices and chunk.choices[0].delta.content:
+            yield chunk.choices[0].delta.content
+
+
 # ─────────────────────────────────────────────── loop
 
 
@@ -245,21 +276,39 @@ def tick(state: State, now: datetime) -> None:
     #       state.daily_proactive_count += 1           # the proactive budget
 
 
-def handle_message(msg: str, state: State) -> None:
-    # an inbound message is consent — it skips both vetoes and lands on L2
+def handle_message(msg: str, state: State, initiated: bool = False) -> None:
+    # an inbound message is consent — it skips both vetoes and lands on L2.
+    # `initiated` marks the other reply path: an L2 message she started
+    # herself (the future L1 wire routes through here with True).
     log.info("message in → L2: %r", msg)
 
     c = CONFIG["l2"]
-    reply = call_llm(
-        c["model"],
-        # minimal for now. persona and retrieved memory assemble here later —
-        # the workbench is built per call, never accumulated.
-        [{"role": "user", "content": msg}],
-        temperature=c["temperature"],
-        max_tokens=c["max_tokens"],
-    )
-    print(reply, flush=True)
-    log.info("L2 replied (%d chars)", len(reply))
+    rid = uuid.uuid4().hex[:12]
+    parts: list[str] = []
+    # the lifecycle always closes: a client that saw reply_start must see
+    # reply_end even when the model dies mid-stream, or it waits forever
+    BROADCAST.publish("reply", {"type": "reply_start", "id": rid, "initiated": initiated})
+    try:
+        for piece in stream_llm(
+            c["model"],
+            # minimal for now. persona and retrieved memory assemble here later —
+            # the workbench is built per call, never accumulated.
+            [{"role": "user", "content": msg}],
+            temperature=c["temperature"],
+            max_tokens=c["max_tokens"],
+        ):
+            parts.append(piece)
+            BROADCAST.publish("reply", {"type": "reply_delta", "id": rid, "text": piece})
+    except Exception:
+        # a failed model call costs one reply, never the beat
+        log.exception("L2 stream failed after %d chunks", len(parts))
+    finally:
+        BROADCAST.publish("reply", {"type": "reply_end", "id": rid})
+
+    reply = "".join(parts)
+    if reply:
+        print(reply, flush=True)
+        log.info("L2 replied (%d chars)", len(reply))
 
     # answering is not initiating: last_proactive and daily_proactive_count
     # stay untouched, or replying would quietly spend the budget that exists
@@ -284,10 +333,18 @@ def build_api(state: State, inbox: queue.Queue) -> FastAPI:
     put two hands on the same file.
     """
     app = FastAPI(title="yorishiro")
+    # the web room runs on its own dev port; bound to 127.0.0.1 there is
+    # no cross-site surface worth defending, so the door stays open
+    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
     @app.get("/state")
     def read_state() -> dict:
-        return asdict(state)
+        # the interval is derived, never stored — computed here so clients
+        # don't have to mirror config.yaml's tick table
+        return {
+            **asdict(state),
+            "tick_interval_seconds": next_interval(state, datetime.now()) or 60.0,
+        }
 
     @app.post("/message")
     async def post_message(request: Request) -> dict:
@@ -311,11 +368,15 @@ def build_api(state: State, inbox: queue.Queue) -> FastAPI:
             try:
                 while not await request.is_disconnected():
                     try:
-                        yield {"data": q.get_nowait()}
+                        item = q.get_nowait()
                     except queue.Empty:
                         # polled, not blocked: q is a thread queue and
                         # waiting on it would stall the event loop
                         await asyncio.sleep(0.2)
+                        continue
+                    # journal lines ride as default messages; structured
+                    # events (reply lifecycle) as named SSE events
+                    yield item if isinstance(item, dict) else {"data": item}
             finally:
                 BROADCAST.unsubscribe(q)
 

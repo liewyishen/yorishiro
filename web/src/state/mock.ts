@@ -1,4 +1,4 @@
-import type { ArrivalEvent, HerState, StateSource, TickEvent, TickTag } from "./types";
+import type { ArrivalEvent, HerState, SourceHandlers, StateSource, TickEvent, TickTag } from "./types";
 
 /**
  * Stands in for the daemon's SSE stream. Time is compressed: a phase that
@@ -104,9 +104,23 @@ function pickTag(weights: Record<TickTag, number>): TickTag {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
+// what the mock answers with when spoken to — hers to replace, obviously
+const CANNED = [
+  "mm. I was in the middle of a thought — say that again, slower?",
+  "I heard you. give me a second to put this down.",
+  "…that's a better question than you think it is.",
+];
+
 export function createMockSource(): StateSource {
+  let handlers: SourceHandlers | null = null;
+  let closed = false;
+  let sends = 0;
+
   return {
-    subscribe(onState, onTick, onArrival) {
+    subscribe(h) {
+      handlers = h;
+      closed = false;
+      const { onState, onTick, onArrival } = h;
       let phaseIdx = 0;
       let phaseElapsedS = 0;
       let sinceArrivalS = 0;
@@ -123,6 +137,7 @@ export function createMockSource(): StateSource {
       };
 
       emit(); // synchronous first emit — the room is never blank
+      h.onLink?.(true); // the mock is always reachable — it lives here
 
       const stateTimer = setInterval(() => {
         t += STATE_EVERY_MS / 1000;
@@ -151,9 +166,33 @@ export function createMockSource(): StateSource {
       }, TICK_EVERY_MS);
 
       return () => {
+        closed = true;
+        handlers = null;
         clearInterval(stateTimer);
         clearInterval(tickTimer);
       };
+    },
+
+    // the same shape as the real wire: arrival lands, then a beat later
+    // her reply streams in word by word
+    async send(_text: string) {
+      const h = handlers;
+      if (!h) return false;
+      h.onArrival({ at: Date.now() });
+      const words = CANNED[sends++ % CANNED.length].split(" ");
+      const id = `mock-${Date.now()}`;
+      const guard = (fn: () => void) => () => {
+        if (!closed) fn();
+      };
+      setTimeout(guard(() => h.onReply?.({ kind: "start", id, at: Date.now(), self: false })), 700);
+      words.forEach((w, i) =>
+        setTimeout(
+          guard(() => h.onReply?.({ kind: "delta", id, at: Date.now(), text: (i ? " " : "") + w })),
+          950 + i * 140,
+        ),
+      );
+      setTimeout(guard(() => h.onReply?.({ kind: "end", id, at: Date.now() })), 1150 + words.length * 140);
+      return true;
     },
   };
 }

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import { Composer } from "./components/Composer";
 import { Presence } from "./components/Presence";
 import { Instrument } from "./components/Instrument";
 import { TickStrip } from "./components/TickStrip";
+import { Voice } from "./components/Voice";
 import { daylight, pageColors, presenceWords } from "./lib/projection";
 import { useHerSource } from "./state/useHerSource";
 import type { HerState } from "./state/types";
@@ -49,12 +51,14 @@ function usePaper(state: HerState | null) {
 }
 
 export function App() {
-  const { state, ticks, arrivals } = useHerSource();
+  const { state, ticks, arrivals, replies, utterance, connected, send } = useHerSource();
   const [instrument, setInstrument] = useState(false);
   usePaper(state);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // typing in the composer is speech, not a keyboard shortcut
+      if ((e.target as HTMLElement | null)?.tagName === "INPUT") return;
       // "`" too — on most layouts ~ lives behind shift, and the split
       // between presence and instrument shouldn't depend on remembering that
       if (e.key === "~" || e.key === "`") {
@@ -79,7 +83,12 @@ export function App() {
       </header>
 
       <section className="flex flex-1 flex-col items-center justify-center">
-        <Presence state={state} ticks={ticks} arrivals={arrivals} />
+        <Presence state={state} ticks={ticks} arrivals={arrivals} replies={replies} />
+        {/* her words, live — enough space held open that surfacing text
+            doesn't shove the core; only a very long reply may still stretch it */}
+        <div className="flex min-h-28 items-start justify-center pt-1">
+          <Voice utterance={utterance} />
+        </div>
         {/* her voice — a human face, apart from the machine's mono */}
         <div className="flex flex-col items-center gap-1.5 text-center font-serif">
           <p className="min-h-6 text-[17px] text-(--ink)">{state.activity_detail}</p>
@@ -88,13 +97,19 @@ export function App() {
       </section>
 
       <footer className="px-6 pb-5">
-        {/* the edge where the life-stream will live; for now, only its silence */}
+        <Composer send={send} />
+        {/* the edge where the life-stream lives */}
         <TickStrip ticks={ticks} />
         {/* breathing room below the tallies — the hairline is chrome, not an axis */}
         <div className="mt-5 flex items-center justify-between border-t border-(--hairline) pt-3">
           <span className="text-[11px] font-medium tracking-[0.1em] text-(--ink-dim) uppercase">
             presence
           </span>
+          {!connected && (
+            <span className="text-[11px] tracking-[0.1em] text-(--ink-dim)">
+              her daemon is unreachable
+            </span>
+          )}
           <button
             onClick={() => setInstrument((v) => !v)}
             className="cursor-pointer text-[11px] font-medium tracking-[0.1em] text-(--ink-dim) uppercase outline-offset-4 outline-(--ink-dim) hover:text-(--ink) focus-visible:outline"

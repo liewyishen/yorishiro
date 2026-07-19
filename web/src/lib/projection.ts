@@ -131,6 +131,13 @@ export function rippleStrength(state: HerState): number {
  */
 export const SELF_RIPPLE = { strength: 1, widthX: 2.1, durationX: 1.3 } as const;
 
+/**
+ * While her words stream in, ripples leave the ring on a gentle rhythm —
+ * at most one this often, however fast the deltas actually arrive.
+ * Tokens are not a cadence; speech is.
+ */
+export const REPLY_RIPPLE_EVERY_S = 0.6;
+
 /** How far an intercepted ring reaches: about a quarter of a crossing. */
 export function retractReachPx(state: HerState): number {
   return BODY_R + lerp(0.22, 0.3, clamp(state.arousal, 0, 1)) * (TRAVEL_R - BODY_R);
