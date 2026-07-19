@@ -1,0 +1,45 @@
+@import "tailwindcss";
+@import "@fontsource-variable/jetbrains-mono";
+@import "@fontsource-variable/lora";
+@import "@fontsource-variable/lora/wght-italic.css";
+
+@theme {
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
+  /* her voice — the machine speaks mono, she speaks this */
+  --font-serif: "Lora Variable", Georgia, serif;
+}
+
+/*
+ * The room's surfaces. JS eases these with her daylight — the values
+ * here are only the first paint, before the state stream arrives.
+ */
+:root {
+  --paper: #f7f4ee;
+  --ink: #3a352e;
+  --ink-dim: #686054;
+  --hairline: #d6d0c4;
+  --pencil: #3f3a32;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  /* ink at proper weight — pale-grey-plus-thin is how text evaporates */
+  font-weight: 450;
+  overflow: hidden;
+}
+
+.font-serif {
+  font-weight: 400;
+}
+
+::selection {
+  background: #e6dccb;
+}

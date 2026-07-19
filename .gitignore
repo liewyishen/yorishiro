@@ -21,6 +21,10 @@ __pycache__/
 venv/
 .ipynb_checkpoints/
 
+# web
+web/node_modules/
+web/dist/
+
 # os
 .DS_Store
 Thumbs.db
