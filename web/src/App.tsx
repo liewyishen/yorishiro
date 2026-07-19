@@ -84,9 +84,10 @@ export function App() {
 
       <section className="flex flex-1 flex-col items-center justify-center">
         <Presence state={state} ticks={ticks} arrivals={arrivals} replies={replies} />
-        {/* her words, live — enough space held open that surfacing text
-            doesn't shove the core; only a very long reply may still stretch it */}
-        <div className="flex min-h-28 items-start justify-center pt-1">
+        {/* her words, live — the slot is fixed so nothing here can shove the
+            core or the words below; inside it the Voice sizes to what she's
+            said and floats centered, air on both sides, scrolling when long */}
+        <div className="flex h-36 items-center justify-center">
           <Voice utterance={utterance} />
         </div>
         {/* her voice — a human face, apart from the machine's mono */}

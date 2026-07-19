@@ -38,7 +38,8 @@ llm:
 l2:
   model: "deepseek/deepseek-v4-pro"
   temperature: 0.8
-  max_tokens: 800
+  max_tokens: 280             # short turns, not essays
+  reasoning: false            # no chain-of-thought — she is speaking, not solving
 
 api:
   host: "127.0.0.1"           # never 0.0.0.0. the save-file lives behind this.

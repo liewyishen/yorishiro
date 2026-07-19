@@ -230,11 +230,17 @@ def call_llm(model: str, messages: list[dict], **params) -> str:
     return (resp.choices[0].message.content or "").strip()
 
 
-def stream_llm(model: str, messages: list[dict], **params) -> Iterator[str]:
+def stream_llm(model: str, messages: list[dict], reasoning: bool = True, **params) -> Iterator[str]:
     """
     call_llm's streaming twin — yields text chunks as the provider sends
     them. Lives beside it so model access still stops at this section.
+
+    reasoning=False disables chain-of-thought explicitly on the wire
+    (OpenRouter's unified `reasoning` parameter) — a hybrid model left to
+    its defaults will sit and think before it says a word.
     """
+    if not reasoning:
+        params.setdefault("extra_body", {})["reasoning"] = {"enabled": False}
     stream = _llm_client().chat.completions.create(
         model=model,
         messages=cast(list[ChatCompletionMessageParam], messages),
@@ -294,6 +300,7 @@ def handle_message(msg: str, state: State, initiated: bool = False) -> None:
             # minimal for now. persona and retrieved memory assemble here later —
             # the workbench is built per call, never accumulated.
             [{"role": "user", "content": msg}],
+            reasoning=bool(c.get("reasoning", True)),
             temperature=c["temperature"],
             max_tokens=c["max_tokens"],
         ):
