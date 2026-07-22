@@ -22,10 +22,17 @@ sleep:
   start: "01:00"
   wake: "06:30"
 
-intention:                     # L1 — not wired yet
-  urge_threshold: 0.60         # THE introvert/extrovert parameter.
-                               # start high. lower only after reading a week of logs.
-                               # a chatty first impression is unrecoverable.
+intention:                     # L1 — judgment wired and logged; mouth not yet
+  urge_threshold: 0.25         # THE introvert/extrovert parameter.
+                               # deliberately low, set from observation: idle urges
+                               # sit in 0.1–0.3, so 0.60 never fired and she never
+                               # spoke first. 0.25 lets a genuine ~0.3 wanting cross.
+                               # this changes how readily she WANTS to speak, not how
+                               # often she MAY — L0 still caps her at daily_proactive_max
+                               # a day with cooldown_min between.
+
+memory:
+  recent_days: 5              # how many days of reflections L1 sees as "最近"
 
 llm:
   # OpenRouter is OpenAI-compatible, so the official SDK talks to it unchanged.
@@ -35,12 +42,35 @@ llm:
   timeout_s: 60               # bounds the reply worker's model call — a hung
                               # call costs one reply, not the heartbeat.
 
+l1:
+  # the cheap one. Runs only on ticks that clear L0, so the cascade — not
+  # this model's price — is what keeps the bill down.
+  model: "deepseek/deepseek-v4-flash"
+  temperature: 0.6
+  max_tokens: 200             # a judgment, not a speech
+  reasoning: false            # keep it cheap and fast for now
+
 l2:
   model: "deepseek/deepseek-v4-pro"
   temperature: 0.8
-  max_tokens: 280             # short turns, not essays
+  max_tokens: 420             # a full thought, not an essay
   reasoning: false            # no chain-of-thought — she is speaking, not solving
 
 api:
   host: "127.0.0.1"           # never 0.0.0.0. the save-file lives behind this.
   port: 8765
+
+db:
+  # short-term conversation memory — the last N literal turns of the CURRENT
+  # chat. Postgres in Docker (docker-compose.yml); its data is bind-mounted
+  # under her/pgdata, so it stays part of the save-file. localhost only,
+  # single-user. A future pgvector RAG layer hangs off this same table.
+  host: "127.0.0.1"           # never 0.0.0.0 — same rule as the API
+  port: 5442                  # host port from docker-compose (127.0.0.1:5442)
+  name: "yorishiro"
+  user: "yoru"
+  password_env: "YORISHIRO_DB_PASSWORD"   # value lives in .env, never here
+  history_turns: 60           # history_turns = number of individual MESSAGES
+                              # (not round-trips) L2 sees; one user line + one
+                              # her line = 2. 60 ≈ 30 exchanges.
+  connect_timeout_s: 3        # DB-down fails fast — never hangs the worker
