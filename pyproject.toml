@@ -5,6 +5,7 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.139.2",
     "openai>=2.46.0",
+    "psycopg[binary]>=3.2.3",
     "python-dotenv>=1.2.2",
     "pyyaml>=6.0.3",
     "sse-starlette>=3.4.5",
@@ -29,6 +30,13 @@ target-version = "py311"
 select = ["E", "F", "I", "B", "UP"]
 
 # ruff format replaces black; defaults are intentional, nothing to override.
+
+[tool.pytest.ini_options]
+# her/ is the save-file, never test code. her/pgdata (the Postgres data dir
+# bind-mounted by docker-compose) is owned by the container and unreadable,
+# so letting collection walk into it dies on a PermissionError. Keep pytest
+# out of the whole save-file dir.
+addopts = "--ignore=her"
 
 [tool.mypy]
 python_version = "3.11"

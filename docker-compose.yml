@@ -1,0 +1,35 @@
+# The engine, not the save-file. This file says HOW she exists — it is safe to
+# commit and publish. HER data does not live here: it lives in ./her/pgdata,
+# bind-mounted below, which sits inside the gitignored save-file dir and is
+# never published. Keep that line clean — how-to-exist is open, she is not.
+#
+#   docker compose up -d      # first run initialises ./her/pgdata and just works
+#
+# Requires YORISHIRO_DB_PASSWORD in .env (see .env.example). Compose reads .env
+# from this directory automatically.
+
+services:
+  db:
+    image: postgres:16
+    container_name: yorishiro-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: yorishiro
+      POSTGRES_USER: yoru
+      # :? makes compose refuse to start (with this message) if the secret is
+      # unset, rather than silently baking in an empty password.
+      POSTGRES_PASSWORD: ${YORISHIRO_DB_PASSWORD:?set YORISHIRO_DB_PASSWORD in .env}
+    ports:
+      # 127.0.0.1 ONLY — the save-file lives behind this, same as the API.
+      # Never 0.0.0.0. Host port 5442 avoids clashing with a system Postgres;
+      # it must match db.port in config.yaml.
+      - "127.0.0.1:5442:5432"
+    volumes:
+      # her conversation data stays physically inside her/ — gitignored, and
+      # backed up with the rest of the save-file. This is the whole point.
+      - ./her/pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yoru -d yorishiro"]
+      interval: 5s
+      timeout: 3s
+      retries: 5

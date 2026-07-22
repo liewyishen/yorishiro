@@ -5,6 +5,8 @@ her/user.md
 her/state.json
 her/memory/
 her/logs/
+# postgres data dir (docker bind-mount) — HER conversation data, never committed
+her/pgdata/
 risk.md
 
 # secrets
