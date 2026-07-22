@@ -1,7 +1,15 @@
 export type Presence = "active" | "sleeping" | "activity";
 
-/** spoke: she initiated. intercepted: L0 refused. silent: allowed, chose nothing. */
-export type TickTag = "spoke" | "intercepted" | "silent";
+/**
+ * One heartbeat's outcome, straight from the daemon's structured `tick`
+ * event — no longer inferred from log wording.
+ *   spoke: she reached out (a proactive L2 fired).
+ *   intercepted: L0 refused — asked-and-blocked (cooldown / cap / dnd / sleep).
+ *   silent: passed the gate, L1 consulted, chose nothing.
+ *   skipped: short-circuited before L1 (in conversation / afterglow) — she
+ *            wasn't even asked, so it renders quieter than an intercepted beat.
+ */
+export type TickTag = "spoke" | "intercepted" | "silent" | "skipped";
 
 export interface HerState {
   presence: Presence;
@@ -9,6 +17,16 @@ export interface HerState {
   valence: number; // -1..1
   arousal: number; // 0..1
   activity_detail: string;
+  /**
+   * How full her short-term conversation window is — operator info for the
+   * instrument only, never the presence screen. Counts, never content.
+   *   len:   messages within the window she actually sees = min(total, cap),
+   *          or null when the DB is offline.
+   *   cap:   the window size (db.history_turns); known even with the DB down.
+   *   total: every message stored behind the window, or null when offline.
+   * Absent until the first reading that carries it (real source only).
+   */
+  conversation?: { len: number | null; cap: number; total: number | null };
 }
 
 export interface TickEvent {
@@ -40,6 +58,16 @@ export interface Utterance {
   self: boolean;
   endedAt: number | null; // epoch ms once ended
 }
+
+/**
+ * One line of the session ledger. The Utterance above is her voice as it
+ * happens; this is what's left after it recedes — held in memory only, so
+ * a reload genuinely forgets. `self` marks a line she started on her own
+ * (L1). Always false today; carried through so that the day she speaks
+ * first, the ledger can still tell the difference.
+ */
+export type ExchangeEntry =
+  { role: "you"; text: string; at: number } | { role: "her"; text: string; at: number; self: boolean };
 
 export interface SourceHandlers {
   onState: (s: HerState) => void;

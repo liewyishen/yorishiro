@@ -1,11 +1,17 @@
-import type { HerState, Presence, SourceHandlers, StateSource } from "./types";
+import type { HerState, Presence, SourceHandlers, StateSource, TickTag } from "./types";
 
 /**
  * The daemon, live: /state polled for her vitals, /events held open for
- * her journal and her voice. Journal lines arrive as default SSE messages
- * and are read for what they record — a blocked tick, a passed gate, a
- * message landing. Reply lifecycle arrives as named `reply` events.
+ * her journal and her voice. Her voice and her heartbeat arrive as named
+ * SSE events — `reply` for the reply lifecycle, `tick` for each heartbeat
+ * outcome, `arrival` for a message landing — each a small JSON payload.
+ * The default journal messages are still streamed for humans, but nothing
+ * here reads their wording: the events, not the log text, are the interface.
  */
+
+/** the tags the daemon emits; anything else is ignored rather than trusted */
+const TICK_TAGS: readonly TickTag[] = ["spoke", "intercepted", "silent", "skipped"];
+const isTickTag = (v: unknown): v is TickTag => TICK_TAGS.includes(v as TickTag);
 
 /** Where the daemon lives. Override with VITE_HER_API when it moves. */
 const API = (import.meta.env.VITE_HER_API as string | undefined) ?? "http://127.0.0.1:8765";
@@ -19,6 +25,11 @@ interface RawState {
   in_conversation: boolean;
   activity_running: boolean;
   tick_interval_seconds: number;
+  // conversation-window usage — integer counts only, never content. len/total
+  // are null when the daemon's DB is down; cap is config, always present.
+  history_cap?: number;
+  history_len?: number | null;
+  history_total?: number | null;
 }
 
 /**
@@ -46,6 +57,12 @@ function project(raw: RawState): HerState {
     valence,
     arousal,
     activity_detail: raw.in_conversation ? "talking with you" : "",
+    // pass the window counts straight through when the daemon sends them; a
+    // daemon too old to carry a cap simply leaves the readout absent
+    conversation:
+      typeof raw.history_cap === "number"
+        ? { len: raw.history_len ?? null, cap: raw.history_cap, total: raw.history_total ?? null }
+        : undefined,
   };
 }
 
@@ -85,19 +102,34 @@ export function createRealSource(): StateSource {
       const timer = setInterval(() => void poll(), POLL_MS);
 
       const es = new EventSource(`${API}/events`);
-      es.onmessage = (e) => {
-        // the journal — plain lines, read for the events they record
-        const line = String(e.data);
-        if (line.includes("tick blocked")) h.onTick({ at: Date.now(), tag: "intercepted" });
-        else if (line.includes("tick passed gate")) h.onTick({ at: Date.now(), tag: "silent" });
-        else if (line.includes("message in")) h.onArrival({ at: Date.now() });
-      };
+      // default messages are the human journal now — left unparsed on purpose.
+      // Every machine signal below is a named, structured event instead.
+      es.addEventListener("tick", (e) => {
+        try {
+          const p = JSON.parse((e as MessageEvent).data as string);
+          // one heartbeat, one tick — its tag maps straight onto TickEvent,
+          // carrying the daemon's own timestamp so the strip stays ordered
+          if (isTickTag(p.tag)) h.onTick({ at: Number(p.at) || Date.now(), tag: p.tag });
+        } catch {
+          /* a malformed tick is a dropped mark, never a thrown beat */
+        }
+      });
+      es.addEventListener("arrival", (e) => {
+        try {
+          const p = JSON.parse((e as MessageEvent).data as string);
+          h.onArrival({ at: Number(p.at) || Date.now() });
+        } catch {
+          h.onArrival({ at: Date.now() });
+        }
+      });
       es.addEventListener("reply", (e) => {
         try {
           const p = JSON.parse((e as MessageEvent).data as string);
           const at = Date.now();
-          if (p.type === "reply_start") h.onReply?.({ kind: "start", id: p.id, at, self: p.initiated === true });
-          else if (p.type === "reply_delta") h.onReply?.({ kind: "delta", id: p.id, at, text: String(p.text ?? "") });
+          if (p.type === "reply_start")
+            h.onReply?.({ kind: "start", id: p.id, at, self: p.initiated === true });
+          else if (p.type === "reply_delta")
+            h.onReply?.({ kind: "delta", id: p.id, at, text: String(p.text ?? "") });
           else if (p.type === "reply_end") h.onReply?.({ kind: "end", id: p.id, at });
         } catch {
           /* a malformed event — the journal already logged whatever happened */

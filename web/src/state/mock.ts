@@ -6,15 +6,25 @@ import type { ArrivalEvent, HerState, SourceHandlers, StateSource, TickEvent, Ti
  * visual mode is reachable within one cup of tea.
  */
 
+// the tags the mock actually rolls. "skipped" is emitted on its own path
+// below (a before-L1 short-circuit isn't a weighted L0/L1 outcome), so it
+// stays out of the weights — which also keeps every existing weight literal
+// valid without adding a key to it.
+type RolledTag = Exclude<TickTag, "skipped">;
+
 interface Phase {
   state: HerState;
   durationS: number;
   // weights for the tick tags — spoke is rare by design, the daily cap is 4
-  tagWeights: Record<TickTag, number>;
+  tagWeights: Record<RolledTag, number>;
   // messages from outside land at this cadence (conversation only)
   arrivalEveryS?: number;
   // a spoke in this phase is hers alone — L2 woke, nobody prompted it
   selfSpoke?: boolean;
+  // like real in-conversation / afterglow beats, this phase mostly
+  // short-circuits before L1 — emit some "skipped" ticks so the strip's
+  // quiet mark shows in mock mode. Off unless set; weights are untouched.
+  skips?: boolean;
 }
 
 const SCRIPT: Phase[] = [
@@ -29,6 +39,7 @@ const SCRIPT: Phase[] = [
     durationS: 20,
     tagWeights: { spoke: 0.06, silent: 0.64, intercepted: 0.3 },
     arrivalEveryS: 7,
+    skips: true, // talking with you — most beats never reach L1
   },
   {
     state: {
@@ -40,6 +51,7 @@ const SCRIPT: Phase[] = [
     },
     durationS: 16,
     tagWeights: { spoke: 0.03, silent: 0.57, intercepted: 0.4 },
+    skips: true, // afterglow — the warm tail of a conversation, still not asking
   },
   {
     state: {
@@ -92,8 +104,11 @@ const SCRIPT: Phase[] = [
 
 const STATE_EVERY_MS = 1000;
 const TICK_EVERY_MS = 3000;
+// mirrors config.yaml db.history_turns — the mock has no DB, so it fakes a
+// window that fills as the conversation grows, purely to show the readout live
+const HISTORY_CAP = 60;
 
-function pickTag(weights: Record<TickTag, number>): TickTag {
+function pickTag(weights: Record<RolledTag, number>): RolledTag {
   let r = Math.random();
   for (const tag of ["spoke", "silent", "intercepted"] as const) {
     r -= weights[tag];
@@ -115,11 +130,13 @@ export function createMockSource(): StateSource {
   let handlers: SourceHandlers | null = null;
   let closed = false;
   let sends = 0;
+  let stored = 0; // messages "in the DB" — grows with each turn, fakes the window
 
   return {
     subscribe(h) {
       handlers = h;
       closed = false;
+      stored = 0; // a fresh subscription is a fresh conversation window
       const { onState, onTick, onArrival } = h;
       let phaseIdx = 0;
       let phaseElapsedS = 0;
@@ -133,6 +150,7 @@ export function createMockSource(): StateSource {
           ...p.state,
           valence: clamp(p.state.valence + 0.08 * Math.sin(t / 7) + 0.03 * Math.sin(t / 2.3), -1, 1),
           arousal: clamp(p.state.arousal + 0.05 * Math.sin(t / 5 + 1), 0, 1),
+          conversation: { len: Math.min(stored, HISTORY_CAP), cap: HISTORY_CAP, total: stored },
         });
       };
 
@@ -151,6 +169,7 @@ export function createMockSource(): StateSource {
         const p = SCRIPT[phaseIdx];
         if (p.arrivalEveryS && sinceArrivalS >= p.arrivalEveryS) {
           sinceArrivalS = 0;
+          stored += 1; // his line lands in the window
           const a: ArrivalEvent = { at: Date.now() };
           onArrival(a);
         }
@@ -159,6 +178,12 @@ export function createMockSource(): StateSource {
 
       const tickTimer = setInterval(() => {
         const p = SCRIPT[phaseIdx];
+        // a conversation/afterglow phase short-circuits before L1 more often
+        // than not — emit those as "skipped" so the quiet mark is on the strip
+        if (p.skips && Math.random() < 0.55) {
+          onTick({ at: Date.now(), tag: "skipped" });
+          return;
+        }
         const tag = pickTag(p.tagWeights);
         const ev: TickEvent =
           tag === "spoke" && p.selfSpoke ? { at: Date.now(), tag, self: true } : { at: Date.now(), tag };
@@ -179,19 +204,26 @@ export function createMockSource(): StateSource {
       const h = handlers;
       if (!h) return false;
       h.onArrival({ at: Date.now() });
+      stored += 2; // his line, then hers — a full exchange fills two slots
       const words = CANNED[sends++ % CANNED.length].split(" ");
       const id = `mock-${Date.now()}`;
       const guard = (fn: () => void) => () => {
         if (!closed) fn();
       };
-      setTimeout(guard(() => h.onReply?.({ kind: "start", id, at: Date.now(), self: false })), 700);
+      setTimeout(
+        guard(() => h.onReply?.({ kind: "start", id, at: Date.now(), self: false })),
+        700,
+      );
       words.forEach((w, i) =>
         setTimeout(
           guard(() => h.onReply?.({ kind: "delta", id, at: Date.now(), text: (i ? " " : "") + w })),
           950 + i * 140,
         ),
       );
-      setTimeout(guard(() => h.onReply?.({ kind: "end", id, at: Date.now() })), 1150 + words.length * 140);
+      setTimeout(
+        guard(() => h.onReply?.({ kind: "end", id, at: Date.now() })),
+        1150 + words.length * 140,
+      );
       return true;
     },
   };

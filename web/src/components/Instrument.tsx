@@ -49,17 +49,31 @@ const TAG_TONE: Record<TickTag, string> = {
   spoke: "", // her own warmth — set inline, it follows the valence band
   silent: "text-[#9c948a]",
   intercepted: "text-[#6b6459]",
+  skipped: "text-[#524c43]", // never asked — dimmer still than intercepted
 };
 
 function hhmmss(at: number): string {
   return new Date(at).toTimeString().slice(0, 8);
 }
 
+/**
+ * How much of her short-term memory is in use. "len / cap turns" while there's
+ * room; once the log outgrows the window, the window pins at the cap and the
+ * full log trails behind it ("60 / 60 · 148 stored"). A DB that isn't there
+ * reads "— (db offline)", never a false zero — same graceful degradation as
+ * everywhere else.
+ */
+function conversationReadout(c: HerState["conversation"]): string {
+  if (!c || c.len === null) return "— (db offline)";
+  if (c.total !== null && c.total > c.cap) return `${c.cap} / ${c.cap} · ${c.total} stored`;
+  return `${c.len} / ${c.cap} turns`;
+}
+
 export function Instrument({ state, ticks }: { state: HerState; ticks: TickEvent[] }) {
   const band = bodyHsl(state.valence);
   const accent = hsl(band);
 
-  const counts: Record<TickTag, number> = { spoke: 0, silent: 0, intercepted: 0 };
+  const counts: Record<TickTag, number> = { spoke: 0, silent: 0, intercepted: 0, skipped: 0 };
   for (const t of ticks) counts[t.tag] += 1;
   const total = Math.max(ticks.length, 1);
 
@@ -76,6 +90,7 @@ export function Instrument({ state, ticks }: { state: HerState; ticks: TickEvent
           <Row k="valence" v={state.valence.toFixed(3)} />
           <Row k="arousal" v={state.arousal.toFixed(3)} />
           <Row k="activity_detail" v={state.activity_detail || "—"} />
+          <Row k="conversation" v={conversationReadout(state.conversation)} />
           <Row k="ticks_recorded" v={String(ticks.length)} />
         </Panel>
 
@@ -83,10 +98,19 @@ export function Instrument({ state, ticks }: { state: HerState; ticks: TickEvent
           <Row k="warmth" v={`${(warmth(state.valence) * 100).toFixed(0)} %`} />
           <Row k="pool" v={hsl(poolHsl(state.valence, 1))} />
           <Row k="ring" v={hsl(ringHsl(state.valence, 1))} />
-          <Row k="breath" v={`${breathPeriodS(state).toFixed(1)} s ± ${(breathAmpl(state) * 100).toFixed(1)} %`} />
+          <Row
+            k="breath"
+            v={`${breathPeriodS(state).toFixed(1)} s ± ${(breathAmpl(state) * 100).toFixed(1)} %`}
+          />
           <Row k="rotation" v={`${rotationPeriodS(state).toFixed(0)} s`} />
-          <Row k="ripple" v={`${rippleDurationS(state).toFixed(1)} s @ ${(rippleStrength(state) * 100).toFixed(0)} %`} />
-          <Row k="retract" v={`${retractReachPx(state).toFixed(0)} px · ${retractDurationS(state).toFixed(1)} s`} />
+          <Row
+            k="ripple"
+            v={`${rippleDurationS(state).toFixed(1)} s @ ${(rippleStrength(state) * 100).toFixed(0)} %`}
+          />
+          <Row
+            k="retract"
+            v={`${retractReachPx(state).toFixed(0)} px · ${retractDurationS(state).toFixed(1)} s`}
+          />
           <Row k="daylight" v={`${(daylight(state) * 100).toFixed(0)} %`} />
           <Row k="words" v={presenceWords(state)} />
         </Panel>
@@ -108,7 +132,7 @@ export function Instrument({ state, ticks }: { state: HerState; ticks: TickEvent
         </Panel>
 
         <Panel label="distribution">
-          {(["silent", "intercepted", "spoke"] as const).map((tag) => (
+          {(["skipped", "silent", "intercepted", "spoke"] as const).map((tag) => (
             <div key={tag} className="flex items-center gap-2 text-[11px] leading-5">
               <span className="w-24 text-[#8a8173]">{tag}</span>
               <div className="h-[5px] flex-1 bg-white/[0.05]">

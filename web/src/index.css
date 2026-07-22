@@ -19,6 +19,11 @@
   --ink-dim: #686054;
   --hairline: #d6d0c4;
   --pencil: #3f3a32;
+  /* the warm end of her own palette — the terracotta the water core carries
+     at rest (projection.ts TERRA/CLAY), not a notification red. A steady
+     ember: it reads on both bone paper and the dark room, so it is left as
+     one warm tone rather than dimmed with the daylight. */
+  --ember: hsl(15 52% 55%);
 }
 
 html,
@@ -42,4 +47,35 @@ body {
 
 ::selection {
   background: #e6dccb;
+}
+
+/*
+ * "She came by." A slow, shallow breath in opacity and scale — an ember
+ * settling and glowing, never a blink or a throb. The soft halo is the
+ * same warm tone, so it reads as warmth off the dot rather than a ring.
+ */
+@keyframes reached-breathe {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
+.reached-ember {
+  animation: reached-breathe 3.6s ease-in-out infinite;
+  box-shadow: 0 0 5px -1px var(--ember);
+}
+
+/* reduced motion: hold the ember steady — present and warm, but still */
+@media (prefers-reduced-motion: reduce) {
+  .reached-ember {
+    animation: none;
+    opacity: 0.9;
+    transform: none;
+  }
 }

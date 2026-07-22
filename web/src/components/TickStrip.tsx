@@ -16,10 +16,7 @@ const jitter = (seed: number) => {
 
 export function TickStrip({ ticks }: { ticks: TickEvent[] }) {
   return (
-    <div
-      aria-hidden
-      className="pointer-events-none flex h-6 items-center justify-center select-none"
-    >
+    <div aria-hidden className="pointer-events-none flex h-6 items-center justify-center select-none">
       {ticks.slice(-56).map((t) =>
         t.tag === "spoke" ? (
           // a spoken tick belongs to the life-stream, not here — a wider breath
@@ -30,12 +27,16 @@ export function TickStrip({ ticks }: { ticks: TickEvent[] }) {
             className="w-[1.5px]"
             style={{
               // short ticks, all near one length — variation lives in the
-              // hand (tilt, drop, spacing), never in "amplitude"
-              height: `${6 + jitter(t.at) * 1.5}px`,
+              // hand (tilt, drop, spacing), never in "amplitude". A skipped
+              // beat (she wasn't even asked) is a shorter, lighter touch than
+              // an asked-and-blocked one — the graphite barely pressed.
+              height: `${(t.tag === "skipped" ? 4 : 6) + jitter(t.at) * 1.5}px`,
               marginLeft: `${3 + jitter(t.at + 3) * 7 + (jitter(t.at + 4) > 0.82 ? 14 : 0)}px`,
               transform: `translateY(${(jitter(t.at + 2) - 0.5) * 5}px) rotate(${(jitter(t.at + 1) - 0.5) * 20}deg)`,
               background: "var(--pencil)",
-              opacity: t.tag === "intercepted" ? 0.65 : 0.4,
+              // intercepted = asked-and-blocked, the fullest mark; silent =
+              // asked-and-chose-quiet; skipped = never asked, the faintest.
+              opacity: t.tag === "intercepted" ? 0.65 : t.tag === "skipped" ? 0.2 : 0.4,
             }}
           />
         ),
